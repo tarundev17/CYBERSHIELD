@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="CyberShield - Cyber Safety & Digital Banking Awareness Platform">
+  <title>CyberShield | Cyber Safety & Digital Banking Awareness</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="toast" class="toast"></div>
+
+  <header class="topbar">
+    <a class="brand" href="#" data-page="dashboard">
+      <span class="brand-icon">🛡️</span>
+      <span>Cyber<span>Shield</span></span>
+    </a>
+    <nav class="nav" id="mainNav">
+      <a href="#" data-page="dashboard">Dashboard</a>
+      <a href="#" data-page="learn">Learn</a>
+      <a href="#" data-page="simulator">Simulator</a>
+      <a href="#" data-page="mock-otp">Security Verification</a>
+      <a href="#" data-page="quiz">Quiz</a>
+      <a href="#" data-page="progress">Progress</a>
+    </nav>
+    <div class="user-area">
+      <span id="userGreeting" class="user-greeting">Guest</span>
+      <button id="menuBtn" class="menu-btn" aria-label="Open menu">☰</button>
+      <button id="loginBtn" class="btn btn-outline small">Login</button>
+    </div>
+  </header>
+
+  <main id="app"></main>
+
+  <footer>
+    <div class="footer-brand">🛡️ CyberShield</div>
+    <p>Think Before You Click. Verify Before You Pay.</p>
+    <small>Educational prototype • Do not enter real OTPs, PINs, passwords or banking details.</small>
+  </footer>
+
+  <div id="modal" class="modal hidden">
+    <div class="modal-card">
+      <button class="modal-close" id="modalClose">×</button>
+      <div id="modalContent"></div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
