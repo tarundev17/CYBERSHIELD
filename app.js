@@ -238,16 +238,19 @@ async function requestSecurityVerification(){
 async function verifySecurityCode(){
   if(!activeSecurityVerification){toast('Request a verification code first');return;}
   const code=document.getElementById('securityCode').value.trim();
-  const r=await fetch('/api/security-verification/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({verificationId:activeSecurityVerification,code})});
-  const d=await r.json();
-  const box=document.getElementById('securityResult');
-  if(!r.ok){
-    box.innerHTML=`<div class="feedback bad"><strong>❌ ${escapeHTML(d.error||'Incorrect verification code')}</strong>${d.attemptsRemaining!==undefined?`<p>Attempts remaining: ${d.attemptsRemaining}</p>`:''}</div>`;
+
+  if(!/^\d{6}$/.test(code)){
+    toast('Enter a 6-digit OTP');
     return;
   }
+
+  // Educational simulation: never process or store a real OTP.
+  // Any 6-digit dummy OTP triggers the awareness alert.
+  alert('⚠️ SECURITY AWARENESS ALERT\n\nNever share an OTP with anyone — not even someone claiming to be from your bank.\n\nCyberShield simulation: this was a dummy OTP exercise. A real OTP should always remain private.');
+
   state.score+=10;
   save();
-  box.innerHTML=`<div class="feedback good"><strong>✅ Security verification successful</strong><p>${escapeHTML(d.message)}</p><p>Your account access has been verified successfully.</p></div>`;
+  document.getElementById('securityResult').innerHTML=`<div class="feedback good"><strong>🛡️ Awareness Check Complete</strong><p>You entered a dummy OTP into the simulation. In real life, never share an OTP with a caller, message, or website.</p></div>`;
   toast('+10 Safety Score');
   activeSecurityVerification=null;
 }
