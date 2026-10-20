@@ -1,1 +1,1 @@
-# No external packages required. CyberShield uses Python standard library + SQLite.
+firebase-admin>=6.5,<8

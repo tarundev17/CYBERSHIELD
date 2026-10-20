@@ -4,44 +4,45 @@ CyberShield is a college B.Tech educational web project for learning about commo
 
 ## Technology
 - Frontend: HTML, CSS, JavaScript
+- Authentication: Firebase Authentication (email/password + required email verification)
 - Backend: Python (`http.server`)
-- Database: SQLite
-- Authentication: email + password with salted PBKDF2-SHA256 password hashes
-- Sessions: server-side session tokens stored in SQLite
-- Security verification: Python-generated, database-tracked 6-digit verification code
+- Database: SQLite (stores user profile and learning progress; Firebase UID links the account)
+- Server verifies Firebase ID tokens before allowing access to saved progress.
+
+## Setup Firebase (required once)
+1. Open the Firebase Console and create/select a project.
+2. In **Authentication → Sign-in method**, enable **Email/Password**.
+3. In **Authentication → Settings → Authorized domains**, add your deployed Render hostname (for example, `your-app.onrender.com`).
+4. In **Project settings → General → Your apps**, create a Web app and copy its configuration into `firebase-config.js` (replace every `YOUR_...` value).
+5. In **Project settings → Service accounts**, generate a private key for the Firebase Admin SDK. Keep this JSON secret; do not put it in the ZIP or `firebase-config.js`.
+6. Set the environment variable `FIREBASE_SERVICE_ACCOUNT_JSON` to the complete service-account JSON in your local environment or Render's **Environment** settings. Treat it as a secret.
+7. Deploy/restart the Python app after setting the environment variable.
+
+Email verification is sent by Firebase. Users cannot log in to CyberShield until they click the verification link. The first verified login creates their SQL profile row.
 
 ## Run locally
-
 1. Install Python 3.9+.
-2. Open a terminal inside this project folder.
-3. Run:
-```bash
-python run.py
-```
-4. Open `http://localhost:5000`.
+2. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+3. Configure `firebase-config.js` and set `FIREBASE_SERVICE_ACCOUNT_JSON` in your shell before running.
+4. Run:
+   ```bash
+   python run.py
+   ```
+5. Open `http://localhost:5000`.
 
-No Node.js or external Python packages are required.
+## Data and security notes
+- SQLite stores the Firebase UID, verified email, display name, and learning progress; passwords are managed by Firebase and are not stored in SQLite.
+- The backend checks Firebase ID tokens and requires `email_verified` before accessing saved data.
+- Learning progress is saved per verified account in SQLite.
+- The Security Verification page is an educational OTP-awareness simulation only. It does not send SMS and must not be used for real banking OTPs.
+- Never place the Firebase service-account private key in frontend files, GitHub, or a public ZIP. Use environment variables.
 
-## Login
-- Create an account with name, email and password.
-- Passwords are never stored as plain text.
-- Login validates credentials on the Python backend.
-- Login/logout uses server-side sessions.
-- Learning progress is stored per account in SQLite.
-
-## Security Verification
-- Log in first, then open **Security Verification**.
-- Use a dummy 10-digit phone number for the college project.
-- The backend creates a 6-digit verification code and stores only its protected hash.
-- The code expires after 5 minutes and has a limited number of attempts.
-- No real SMS or banking service is contacted.
-
-## Important
-This is an educational college project. Never enter real banking credentials, OTPs, PINs or other sensitive information.
-
-## Recent learning updates
-- Learn page includes embedded YouTube awareness videos and English topic-search links.
+## Learning features
+- Learn page includes YouTube awareness videos and topic-search links.
 - Simulator includes beginner, intermediate and advanced scenarios.
-- Quiz question bank expanded for practice.
-- Guest dashboard resets transient progress after logout; signed-in progress remains saved per account.
+- Quiz question bank includes practice questions.
+- Guest progress resets on logout; verified signed-in progress remains saved per account.
 - YouTube embeds require internet access and may be unavailable if the publisher disables embedding.
