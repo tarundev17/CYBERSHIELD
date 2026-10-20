@@ -4,42 +4,11 @@ from urllib.parse import urlparse
 from http import cookies
 from datetime import datetime, timezone
 
-import firebase_admin
-from firebase_admin import auth as firebase_auth, credentials
-
 BASE = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE, 'cybershield.db')
 HOST = os.environ.get('HOST', '0.0.0.0')
 PORT = int(os.environ.get('PORT', '5000'))
 DEFAULT_STATE = {'score': 0, 'scenariosDone': [], 'quizBest': 0, 'quizDone': 0, 'badgeIds': []}
-
-
-def init_firebase():
-    if firebase_admin._apps:
-        return
-    raw = os.environ.get('FIREBASE_SERVICE_ACCOUNT_JSON', '').strip()
-    if raw:
-        try:
-            firebase_admin.initialize_app(credentials.Certificate(json.loads(raw)))
-        except Exception as exc:
-            print(f'Firebase Admin configuration error: {exc}')
-
-
-def verify_id_token(handler):
-    header = handler.headers.get('Authorization', '')
-    if not header.startswith('Bearer '):
-        return None
-    if not firebase_admin._apps:
-        init_firebase()
-    if not firebase_admin._apps:
-        return None
-    try:
-        decoded = firebase_auth.verify_id_token(header[7:].strip(), check_revoked=True)
-        if not decoded.get('email') or not decoded.get('email_verified'):
-            return None
-        return decoded
-    except Exception:
-        return None
 
 
 def db():
@@ -50,15 +19,22 @@ def db():
 
 def init_db():
     conn = db()
-    conn.execute("""CREATE TABLE IF NOT EXISTS auth_users (
+    conn.execute('''CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        firebase_uid TEXT NOT NULL UNIQUE,
         name TEXT NOT NULL,
         email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+        password_hash TEXT NOT NULL,
+        salt TEXT NOT NULL,
         state_json TEXT NOT NULL,
         created_at TEXT NOT NULL
-    )""")
-    conn.execute("""CREATE TABLE IF NOT EXISTS security_verifications (
+    )''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS sessions (
+        token TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        expires_at TEXT NOT NULL,
+        FOREIGN KEY(user_id) REFERENCES users(id)
+    )''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS security_verifications (
         id TEXT PRIMARY KEY,
         user_id INTEGER NOT NULL,
         phone_hint TEXT NOT NULL,
@@ -67,8 +43,8 @@ def init_db():
         status TEXT NOT NULL DEFAULT 'sent',
         created_at TEXT NOT NULL,
         expires_at TEXT NOT NULL,
-        FOREIGN KEY(user_id) REFERENCES auth_users(id)
-    )""")
+        FOREIGN KEY(user_id) REFERENCES users(id)
+    )''')
     conn.commit()
     conn.close()
 
@@ -123,45 +99,62 @@ class Handler(SimpleHTTPRequestHandler):
             return None
 
     def session_user(self):
-        decoded = verify_id_token(self)
-        if not decoded:
+        raw = self.headers.get('Cookie', '')
+        jar = cookies.SimpleCookie()
+        jar.load(raw)
+        morsel = jar.get('cybershield_session')
+        if not morsel:
             return None
+        token = morsel.value
         conn = db()
-        row = conn.execute('SELECT * FROM auth_users WHERE firebase_uid=?', (decoded['uid'],)).fetchone()
+        row = conn.execute('''SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id
+                              WHERE s.token=? AND s.expires_at>?''', (token, now_iso())).fetchone()
         conn.close()
-        return (decoded['uid'], row) if row else None
+        return (token, row) if row else None
+
+    def create_session(self, user_id):
+        token = secrets.token_urlsafe(48)
+        expires = datetime.now(timezone.utc).timestamp() + 7 * 24 * 60 * 60
+        expires_iso = datetime.fromtimestamp(expires, timezone.utc).isoformat()
+        conn = db()
+        conn.execute('INSERT INTO sessions(token,user_id,expires_at) VALUES(?,?,?)', (token, user_id, expires_iso))
+        conn.commit(); conn.close()
+        return f'cybershield_session={token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800'
+
+    def clear_session(self):
+        current = self.session_user()
+        if current:
+            conn = db(); conn.execute('DELETE FROM sessions WHERE token=?', (current[0],)); conn.commit(); conn.close()
+        return 'cybershield_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0'
 
     def do_POST(self):
         path = urlparse(self.path).path
         data = self.read_json()
         if data is None:
             return self.send_json(400, {'error': 'Invalid JSON.'})
-        if path == '/api/auth/sync':
-            decoded = verify_id_token(self)
-            if not decoded:
-                return self.send_json(401, {'error': 'Verify your email address, then log in again.'})
-            name = str(data.get('name') or decoded.get('name') or decoded['email'].split('@')[0]).strip()[:80]
-            if len(name) < 2:
-                name = decoded['email'].split('@')[0][:80] or 'CyberShield User'
+        if path == '/api/register':
+            name = str(data.get('name', '')).strip(); email = str(data.get('email', '')).strip().lower(); password = str(data.get('password', ''))
+            if len(name) < 2: return self.send_json(400, {'error': 'Please enter your name.'})
+            if not valid_email(email): return self.send_json(400, {'error': 'Please enter a valid email address.'})
+            if len(password) < 8: return self.send_json(400, {'error': 'Password must be at least 8 characters.'})
+            salt, digest = hash_password(password)
             conn = db()
-            row = conn.execute('SELECT * FROM auth_users WHERE firebase_uid=?', (decoded['uid'],)).fetchone()
-            if row:
-                conn.execute('UPDATE auth_users SET name=?, email=? WHERE firebase_uid=?', (name, decoded['email'].lower(), decoded['uid']))
-            else:
-                try:
-                    conn.execute('INSERT INTO auth_users(firebase_uid,name,email,state_json,created_at) VALUES(?,?,?,?,?)',
-                                 (decoded['uid'], name, decoded['email'].lower(), json.dumps(DEFAULT_STATE), now_iso()))
-                except sqlite3.IntegrityError:
-                    conn.close()
-                    return self.send_json(409, {'error': 'This email is already linked to another account.'})
-            conn.commit()
-            row = conn.execute('SELECT * FROM auth_users WHERE firebase_uid=?', (decoded['uid'],)).fetchone()
-            conn.close()
-            return self.send_json(200, {'user': payload(row)})
-        if path in ('/api/register', '/api/login'):
-            return self.send_json(410, {'error': 'Use Firebase Authentication for account creation and login.'})
+            try:
+                cur = conn.execute('INSERT INTO users(name,email,password_hash,salt,state_json,created_at) VALUES(?,?,?,?,?,?)',
+                    (name,email,digest,salt,json.dumps(DEFAULT_STATE),now_iso()))
+                conn.commit(); uid = cur.lastrowid
+            except sqlite3.IntegrityError:
+                conn.close(); return self.send_json(409, {'error': 'An account with this email already exists. Please log in.'})
+            row = conn.execute('SELECT * FROM users WHERE id=?', (uid,)).fetchone(); conn.close()
+            return self.send_json(201, {'user': payload(row)}, {'Set-Cookie': self.create_session(uid)})
+        if path == '/api/login':
+            email = str(data.get('email', '')).strip().lower(); password = str(data.get('password', ''))
+            conn = db(); row = conn.execute('SELECT * FROM users WHERE email=?', (email,)).fetchone(); conn.close()
+            if not row or not verify_password(password, row['salt'], row['password_hash']):
+                return self.send_json(401, {'error': 'Incorrect email or password.'})
+            return self.send_json(200, {'user': payload(row)}, {'Set-Cookie': self.create_session(row['id'])})
         if path == '/api/logout':
-            return self.send_json(200, {'ok': True})
+            return self.send_json(200, {'ok': True}, {'Set-Cookie': self.clear_session()})
         if path == '/api/security-verification/start':
             current = self.session_user()
             if not current:
@@ -227,13 +220,13 @@ class Handler(SimpleHTTPRequestHandler):
             'quizDone': max(0, int(data.get('quizDone') or 0)),
             'badgeIds': data.get('badgeIds') if isinstance(data.get('badgeIds'), list) else []
         }
-        conn = db(); conn.execute('UPDATE auth_users SET state_json=? WHERE id=?', (json.dumps(state), current[1]['id'])); conn.commit(); conn.close()
+        conn = db(); conn.execute('UPDATE users SET state_json=? WHERE id=?', (json.dumps(state), current[1]['id'])); conn.commit(); conn.close()
         self.send_json(200, {'state': state})
 
     def do_GET(self):
         path = urlparse(self.path).path
         if path == '/api/me':
-            current = self.session_user(); return self.send_json(200, {'user': payload(current[1]) if current and current[1] else None})
+            current = self.session_user(); return self.send_json(200, {'user': payload(current[1]) if current else None})
         if path == '/api/state':
             current = self.session_user()
             if not current: return self.send_json(401, {'error': 'Not logged in.'})
@@ -245,6 +238,5 @@ class Handler(SimpleHTTPRequestHandler):
 
 if __name__ == '__main__':
     init_db()
-    init_firebase()
     print(f'CyberShield running at http://{HOST}:{PORT}')
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()

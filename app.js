@@ -105,28 +105,6 @@ const awarenessVideos = [
 
 let state = {user:null, score:0, scenariosDone:[], quizBest:0, quizDone:0, badgeIds:[]};
 let authenticated = false;
-let firebaseAuth = null;
-let firebaseReady = false;
-try {
-  const cfg = window.FIREBASE_CONFIG || {};
-  if (cfg.apiKey && !String(cfg.apiKey).includes('YOUR_')) {
-    if (!firebase.apps.length) firebase.initializeApp(cfg);
-    firebaseAuth = firebase.auth();
-    firebaseReady = true;
-  }
-} catch (e) { console.error('Firebase setup required:', e); }
-async function authHeaders(extra={}) {
-  const headers = {...extra};
-  if (firebaseAuth?.currentUser) headers.Authorization = `Bearer ${await firebaseAuth.currentUser.getIdToken()}`;
-  return headers;
-}
-async function syncFirebaseUser(name) {
-  const token = await firebaseAuth.currentUser.getIdToken(true);
-  const r = await fetch('/api/auth/sync', {method:'POST', headers:{'Content-Type':'application/json', Authorization:`Bearer ${token}`}, body:JSON.stringify({name})});
-  const d = await r.json();
-  if (!r.ok) throw new Error(d.error || 'Could not sync account with SQL database.');
-  return d.user;
-}
 let currentScenario = 0;
 let currentQuiz = 0;
 let quizScore = 0;
@@ -135,7 +113,7 @@ let scenarioAnswered = false;
 function save(){
   updateHeader();
   if(!authenticated) return;
-  authHeaders({'Content-Type':'application/json'}).then(headers=>fetch('/api/state',{method:'PUT',headers,body:JSON.stringify(state)})).catch(()=>toast('Could not save progress. Check the server.'));
+  fetch('/api/state',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(state)}).catch(()=>toast('Could not save progress. Check the server.'));
 }
 function toast(msg){const t=document.getElementById("toast");t.textContent=msg;t.classList.add("show");setTimeout(()=>t.classList.remove("show"),2400)}
 function escapeHTML(s){return String(s).replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]))}
@@ -283,7 +261,7 @@ async function requestSecurityVerification(){
   if(!authenticated){showAuth('login'); return;}
   const phone=document.getElementById('securityPhone').value.replace(/\D/g,'');
   if(phone.length!==10){toast('Enter a 10-digit phone number');return;}
-  const r=await fetch('/api/security-verification/start',{method:'POST',headers:await authHeaders({'Content-Type':'application/json'}),body:JSON.stringify({phone})});
+  const r=await fetch('/api/security-verification/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone})});
   const d=await r.json();
   if(!r.ok){toast(d.error||'Could not start security verification');return;}
   activeSecurityVerification=d.verificationId;
@@ -416,55 +394,30 @@ function openLogin(){
   showAuth('login');
 }
 function showAuth(mode='login'){
-  if(!firebaseReady){toast('Firebase setup is required. Add your Firebase web config first.'); return;}
   const login=mode==='login';
-  document.getElementById("modalContent").innerHTML=`<h2>${login?'CyberShield Login':'Create your CyberShield account'}</h2><p>${login?'Log in with your verified email to access your saved progress.':'Create an account. You must verify your email before logging in.'}</p><div class="form">${login?'':`<label>Name</label><input id="authName" autocomplete="name" placeholder="Enter your name">`}<label>Email</label><input id="authEmail" type="email" autocomplete="email" placeholder="you@example.com"><label>Password</label><input id="authPassword" type="password" autocomplete="${login?'current-password':'new-password'}" placeholder="Minimum 8 characters"><button class="btn btn-primary" onclick="${login?'loginDemo()':'registerDemo()'}">${login?'Login':'Create Account'}</button><p style="margin-top:12px;font-size:13px">${login?`Don't have an account? <button class="link-btn" onclick="showAuth('register')">Create one</button>`:`Already have an account? <button class="link-btn" onclick="showAuth('login')">Log in</button>`}</p></div>`;
+  document.getElementById("modalContent").innerHTML=`<h2>${login?'CyberShield Login':'Create your CyberShield account'}</h2><p>${login?'Log in to access your saved progress from any device using this server.':'Create an account to save your CyberShield progress securely.'}</p><div class="form">${login?'':`<label>Name</label><input id="authName" autocomplete="name" placeholder="Enter your name">`}<label>Email</label><input id="authEmail" type="email" autocomplete="email" placeholder="you@example.com"><label>Password</label><input id="authPassword" type="password" autocomplete="${login?'current-password':'new-password'}" placeholder="Minimum 8 characters"><button class="btn btn-primary" onclick="${login?'loginDemo()':'registerDemo()'}">${login?'Login':'Create Account'}</button><p style="margin-top:12px;font-size:13px">${login?`Don't have an account? <button class="link-btn" onclick="showAuth('register')">Create one</button>`:`Already have an account? <button class="link-btn" onclick="showAuth('login')">Log in</button>`}</p></div>`;
   document.getElementById("modal").classList.remove("hidden");
   setTimeout(()=>document.getElementById(login?'authEmail':'authName')?.focus(),50);
 }
 async function registerDemo(){
-  if(!firebaseReady)return toast('Firebase is not configured yet.');
   const name=document.getElementById('authName').value.trim(), email=document.getElementById('authEmail').value.trim(), password=document.getElementById('authPassword').value;
-  if(name.length<2||!email||password.length<8)return toast('Enter your name, a valid email and a password of at least 8 characters.');
-  try{
-    const cred=await firebaseAuth.createUserWithEmailAndPassword(email,password);
-    await cred.user.updateProfile({displayName:name});
-    await cred.user.sendEmailVerification();
-    await firebaseAuth.signOut();
-    document.getElementById('modal').classList.add('hidden');
-    toast('Verification email sent. Verify your email, then log in.');
-  }catch(e){toast(e.message||'Registration failed.');}
+  if(!name||!email||!password)return toast('Please fill all fields');
+  const r=await fetch('/api/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,email,password})});
+  const d=await r.json(); if(!r.ok)return toast(d.error||'Registration failed');
+  authenticated=true; state=d.user.state; state.user=d.user.name; document.getElementById('modal').classList.add('hidden'); updateHeader(); toast(`Welcome, ${d.user.name}!`); render();
 }
 async function loginDemo(){
-  if(!firebaseReady)return toast('Firebase is not configured yet.');
   const email=document.getElementById('authEmail').value.trim(), password=document.getElementById('authPassword').value;
   if(!email||!password)return toast('Enter your email and password');
-  try{
-    const cred=await firebaseAuth.signInWithEmailAndPassword(email,password);
-    await cred.user.reload();
-    if(!cred.user.emailVerified){await firebaseAuth.signOut();return toast('Please verify your email using the link we sent you.');}
-    const user=await syncFirebaseUser(cred.user.displayName || email.split('@')[0]);
-    authenticated=true; state=user.state; state.user=user.name; document.getElementById('modal').classList.add('hidden'); updateHeader(); toast(`Welcome back, ${user.name}!`); render();
-  }catch(e){if(firebaseAuth.currentUser)await firebaseAuth.signOut().catch(()=>{});toast(e.message||'Login failed.');}
+  const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password})});
+  const d=await r.json(); if(!r.ok)return toast(d.error||'Login failed');
+  authenticated=true; state=d.user.state; state.user=d.user.name; document.getElementById('modal').classList.add('hidden'); updateHeader(); toast(`Welcome back, ${d.user.name}!`); render();
 }
-
-async function logout(){if(firebaseAuth?.currentUser)await firebaseAuth.signOut().catch(()=>{});authenticated=false;state={user:null,score:0,scenariosDone:[],quizBest:0,quizDone:0,badgeIds:[]};currentScenario=0;currentQuiz=0;quizScore=0;scenarioAnswered=false;updateHeader();toast('Logged out — guest progress reset');location.hash='dashboard';render();}
+async function logout(){await fetch('/api/logout',{method:'POST'}).catch(()=>{});authenticated=false;state={user:null,score:0,scenariosDone:[],quizBest:0,quizDone:0,badgeIds:[]};currentScenario=0;currentQuiz=0;quizScore=0;scenarioAnswered=false;updateHeader();toast('Logged out — guest progress reset');location.hash='dashboard';render();}
 async function initAuth(){
-  if(!firebaseReady){updateHeader();render();return;}
-  firebaseAuth.onAuthStateChanged(async current=>{
-    try{
-      if(current){
-        await current.reload();
-        if(current.emailVerified){
-          const user=await syncFirebaseUser(current.displayName || current.email.split('@')[0]);
-          authenticated=true; state=user.state; state.user=user.name;
-        }else{authenticated=false;await firebaseAuth.signOut();}
-      }else{authenticated=false;state={user:null,score:0,scenariosDone:[],quizBest:0,quizDone:0,badgeIds:[]};}
-    }catch(e){console.warn('Could not restore Firebase session:',e.message);authenticated=false;}
-    updateHeader(); render();
-  });
+  try{const r=await fetch('/api/me'); const d=await r.json(); if(d.user){authenticated=true;state=d.user.state;state.user=d.user.name;} }catch(e){toast('Please run CyberShield through the Python server.');}
+  updateHeader(); render();
 }
-
 document.addEventListener("click",e=>{
   const a=e.target.closest("[data-page]");
   if(a){e.preventDefault();go(a.dataset.page)}
